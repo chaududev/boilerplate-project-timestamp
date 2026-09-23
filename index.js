@@ -1,34 +1,65 @@
-// index.js
-// where your node app starts
-
-// init project
 require('dotenv').config();
-var express = require('express');
-var app = express();
+const express = require('express');
+const cors = require('cors');
+const app = express();
 
-// enable CORS (https://en.wikipedia.org/wiki/Cross-origin_resource_sharing)
-// so that your API is remotely testable by FCC
-var cors = require('cors');
-app.use(cors({ optionsSuccessStatus: 200 })); // some legacy browsers choke on 204
+const port = process.env.PORT || 3000;
 
-// http://expressjs.com/en/starter/static-files.html
-app.use(express.static('public'));
+app.use(cors());
 
-// http://expressjs.com/en/starter/basic-routing.html
+app.use('/public', express.static(`${process.cwd()}/public`));
+
+// Parse form data
+app.use(express.urlencoded({ extended: true }));
+
 app.get('/', function (req, res) {
-  res.sendFile(__dirname + '/views/index.html');
+  res.sendFile(process.cwd() + '/views/index.html');
 });
 
-// your first API endpoint...
-app.get('/api/whoami', function (req, res) {
-  res.json({
-    ipaddress: req.ip,
-    language: req.headers['accept-language'],
-    software: req.headers['user-agent']
-  });
+// Store URLs
+const urls = [];
+let nextId = 1;
+
+// Create short URL
+app.post('/api/shorturl', function (req, res) {
+  const originalUrl = req.body.url;
+
+  // Validate URL
+  const urlPattern = /^https?:\/\/www\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/.*)?$/;
+
+  if (!urlPattern.test(originalUrl)) {
+    return res.json({ error: 'invalid url' });
+  }
+
+  const existingUrl = urls.find(item => item.original_url === originalUrl);
+
+  if (existingUrl) {
+    return res.json(existingUrl);
+  }
+
+  const urlData = {
+    original_url: originalUrl,
+    short_url: nextId++
+  };
+
+  urls.push(urlData);
+
+  res.json(urlData);
 });
 
-// listen for requests :)
-var listener = app.listen(process.env.PORT || 3000, function () {
-  console.log('Your app is listening on port ' + listener.address().port);
+// Redirect to original URL
+app.get('/api/shorturl/:short_url', function (req, res) {
+  const shortUrl = Number(req.params.short_url);
+
+  const urlData = urls.find(item => item.short_url === shortUrl);
+
+  if (!urlData) {
+    return res.json({ error: 'No short URL found for the given input' });
+  }
+
+  res.redirect(urlData.original_url);
+});
+
+app.listen(port, function () {
+  console.log(`Listening on port ${port}`);
 });
