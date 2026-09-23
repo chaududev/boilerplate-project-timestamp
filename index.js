@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+
 const app = express();
 
 const port = process.env.PORT || 3000;
@@ -12,35 +13,46 @@ app.use('/public', express.static(`${process.cwd()}/public`));
 // Parse form data
 app.use(express.urlencoded({ extended: true }));
 
+// Homepage
 app.get('/', function (req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
 });
 
-// Store URLs
+// Store shortened URLs
 const urls = [];
 let nextId = 1;
 
-// Create short URL
+// Create a short URL
 app.post('/api/shorturl', function (req, res) {
   const originalUrl = req.body.url;
 
   // Validate URL
-  const urlPattern = /^https?:\/\/www\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/.*)?$/;
+  try {
+    const url = new URL(originalUrl);
 
-  if (!urlPattern.test(originalUrl)) {
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return res.json({ error: 'invalid url' });
+    }
+  } catch (error) {
     return res.json({ error: 'invalid url' });
   }
 
-  const existingUrl = urls.find(item => item.original_url === originalUrl);
+  // Check if URL already exists
+  const existingUrl = urls.find(function (item) {
+    return item.original_url === originalUrl;
+  });
 
   if (existingUrl) {
     return res.json(existingUrl);
   }
 
+  // Create short URL
   const urlData = {
     original_url: originalUrl,
-    short_url: nextId++
+    short_url: nextId
   };
+
+  nextId++;
 
   urls.push(urlData);
 
@@ -49,17 +61,22 @@ app.post('/api/shorturl', function (req, res) {
 
 // Redirect to original URL
 app.get('/api/shorturl/:short_url', function (req, res) {
-  const shortUrl = Number(req.params.short_url);
+  const shortUrl = parseInt(req.params.short_url);
 
-  const urlData = urls.find(item => item.short_url === shortUrl);
+  const urlData = urls.find(function (item) {
+    return item.short_url === shortUrl;
+  });
 
   if (!urlData) {
-    return res.json({ error: 'No short URL found for the given input' });
+    return res.json({
+      error: 'No short URL found for the given input'
+    });
   }
 
   res.redirect(urlData.original_url);
 });
 
+// Start server
 app.listen(port, function () {
   console.log(`Listening on port ${port}`);
 });
