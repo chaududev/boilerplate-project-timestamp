@@ -1,82 +1,232 @@
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
+require('dotenv').config();
 
 const app = express();
 
-const port = process.env.PORT || 3000;
-
 app.use(cors());
+app.use(express.urlencoded({ extended: false }));
+app.use(express.static('public'));
 
-app.use('/public', express.static(`${process.cwd()}/public`));
+// =========================
+// MongoDB
+// =========================
 
-// Parse form data
-app.use(express.urlencoded({ extended: true }));
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
-// Homepage
-app.get('/', function (req, res) {
-  res.sendFile(process.cwd() + '/views/index.html');
+// =========================
+// Schemas
+// =========================
+
+const userSchema = new mongoose.Schema({
+  username: {
+    type: String,
+    required: true
+  }
 });
 
-// Store shortened URLs
-const urls = [];
-let nextId = 1;
+const exerciseSchema = new mongoose.Schema({
+  username: String,
+  description: String,
+  duration: Number,
+  date: String
+});
 
-// Create a short URL
-app.post('/api/shorturl', function (req, res) {
-  const originalUrl = req.body.url;
+const User = mongoose.model('User', userSchema);
+const Exercise = mongoose.model('Exercise', exerciseSchema);
 
-  // Validate URL
+// =========================
+// Frontend
+// =========================
+
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/views/index.html');
+});
+
+// =========================
+// POST /api/users
+// Create user
+// =========================
+
+app.post('/api/users', async (req, res) => {
   try {
-    const url = new URL(originalUrl);
+    const { username } = req.body;
 
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      return res.json({ error: 'invalid url' });
+    if (!username) {
+      return res.status(400).json({
+        error: 'Username is required'
+      });
     }
-  } catch (error) {
-    return res.json({ error: 'invalid url' });
-  }
 
-  // Check if URL already exists
-  const existingUrl = urls.find(function (item) {
-    return item.original_url === originalUrl;
-  });
+    const user = await User.create({
+      username
+    });
 
-  if (existingUrl) {
-    return res.json(existingUrl);
-  }
-
-  // Create short URL
-  const urlData = {
-    original_url: originalUrl,
-    short_url: nextId
-  };
-
-  nextId++;
-
-  urls.push(urlData);
-
-  res.json(urlData);
-});
-
-// Redirect to original URL
-app.get('/api/shorturl/:short_url', function (req, res) {
-  const shortUrl = parseInt(req.params.short_url);
-
-  const urlData = urls.find(function (item) {
-    return item.short_url === shortUrl;
-  });
-
-  if (!urlData) {
-    return res.json({
-      error: 'No short URL found for the given input'
+    res.json({
+      username: user.username,
+      _id: user._id
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
     });
   }
-
-  res.redirect(urlData.original_url);
 });
 
+// =========================
+// GET /api/users
+// Get all users
+// =========================
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find();
+
+    res.json(
+      users.map(user => ({
+        username: user.username,
+        _id: user._id
+      }))
+    );
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+// =========================
+// POST /api/users/:_id/exercises
+// Add exercise
+// =========================
+
+app.post('/api/users/:_id/exercises', async (req, res) => {
+  try {
+    const { _id } = req.params;
+    const { description, duration, date } = req.body;
+
+    const user = await User.findById(_id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found'
+      });
+    }
+
+    const exerciseDate = date
+      ? new Date(date)
+      : new Date();
+
+    if (isNaN(exerciseDate.getTime())) {
+      return res.status(400).json({
+        error: 'Invalid date'
+      });
+    }
+
+    const exercise = await Exercise.create({
+      username: user.username,
+      description,
+      duration: Number(duration),
+      date: exerciseDate.toDateString()
+    });
+
+    res.json({
+      username: user.username,
+      _id: user._id,
+      description: exercise.description,
+      duration: exercise.duration,
+      date: exercise.date
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+// =========================
+// GET /api/users/:_id/logs
+// Get exercise log
+// =========================
+
+app.get('/api/users/:_id/logs', async (req, res) => {
+  try {
+    const { _id } = req.params;
+    const { from, to, limit } = req.query;
+
+    const user = await User.findById(_id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: 'User not found'
+      });
+    }
+
+    const query = {
+      username: user.username
+    };
+
+    let exercises = await Exercise.find(query);
+
+    // =========================
+    // Filter by from
+    // =========================
+
+    if (from) {
+      const fromDate = new Date(from);
+
+      exercises = exercises.filter(exercise => {
+        return new Date(exercise.date) >= fromDate;
+      });
+    }
+
+    // =========================
+    // Filter by to
+    // =========================
+
+    if (to) {
+      const toDate = new Date(to);
+
+      exercises = exercises.filter(exercise => {
+        return new Date(exercise.date) <= toDate;
+      });
+    }
+
+    // =========================
+    // Limit
+    // =========================
+
+    if (limit) {
+      exercises = exercises.slice(0, Number(limit));
+    }
+
+    res.json({
+      username: user.username,
+      count: exercises.length,
+      _id: user._id,
+      log: exercises.map(exercise => ({
+        description: exercise.description,
+        duration: exercise.duration,
+        date: exercise.date
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+// =========================
 // Start server
-app.listen(port, function () {
-  console.log(`Listening on port ${port}`);
+// =========================
+
+const listener = app.listen(process.env.PORT || 3000, () => {
+  console.log(
+    'Your app is listening on port ' +
+    listener.address().port
+  );
 });
